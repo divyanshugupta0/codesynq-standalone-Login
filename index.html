@@ -815,7 +815,14 @@
             btn.disabled = true;
 
             try {
+                const urlParams = new URLSearchParams(window.location.search);
+                const isDesktop = urlParams.get('source') === 'desktop';
+
                 if (isLogin) {
+                    if (isDesktop) {
+                        window.location.href = `codesynq://auth?provider=email&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;
+                        return;
+                    }
                     const result = await auth.signInWithEmailAndPassword(email, password);
 
                     // Redirect logic removed for standalone login page
@@ -825,10 +832,18 @@
                     if (password.length < 6) {
                         throw new Error('Password must be at least 6 characters long');
                     }
+                    if (isDesktop) {
+                        window.location.href = `codesynq://auth?provider=signup&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&displayName=${encodeURIComponent(displayName)}`;
+                        return;
+                    }
                     const result = await auth.createUserWithEmailAndPassword(email, password);
                     await result.user.updateProfile({ displayName: displayName });
                     showNotification('Account created successfully!', 'success');
                 }
+                
+                // Reset button on success for web users
+                btn.innerHTML = originalContent;
+                btn.disabled = false;
             } catch (error) {
                 let msg = error.message;
                 if (error.code === 'auth/wrong-password') msg = 'Incorrect password.';
