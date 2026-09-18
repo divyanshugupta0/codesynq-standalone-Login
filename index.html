@@ -770,6 +770,22 @@
             return params.get('redirect_uri') || sessionStorage.getItem('codesynq-redirect-uri') || '';
         }
 
+        function postOAuthToRedirectUri(redirectUri, data) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = redirectUri;
+            form.style.display = 'none';
+            Object.entries(data).forEach(([key, value]) => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = key;
+                input.value = value == null ? '' : String(value);
+                form.appendChild(input);
+            });
+            document.body.appendChild(form);
+            form.submit();
+        }
+
         function extractOAuthCredential(result) {
             if (!result) return null;
             if (result.credential) return result.credential;
@@ -803,8 +819,7 @@
             if (redirectUri) {
                 showNotification('Successfully logged in!', 'success');
                 setTimeout(() => {
-                    const params = new URLSearchParams(data);
-                    window.location.href = `${redirectUri}?${params.toString()}`;
+                    postOAuthToRedirectUri(redirectUri, data);
                 }, 400);
                 return true;
             }
@@ -827,12 +842,10 @@
         }
 
         function shouldUsePopupForOAuth() {
-            // System browser + localhost callback uses redirect; popup only for legacy embedded Electron window.
+            // Popup returns OAuth tokens reliably for localhost callback (redirect often loses credentials).
             return Boolean(
-                isEmbeddedMode() &&
-                window.desktopAuth &&
-                window.desktopAuth.sendAuthResult &&
-                !getRedirectUri()
+                getRedirectUri() ||
+                (isEmbeddedMode() && window.desktopAuth && window.desktopAuth.sendAuthResult)
             );
         }
 
@@ -1042,8 +1055,8 @@
             const cred = extractOAuthCredential(result);
             if (cred && deliverOAuthToApp(cred)) return;
 
-            if (cred && shouldUsePopupForOAuth()) {
-                showNotification('Sign-in succeeded but could not reach the app. Please try again.', 'error');
+            if (getRedirectUri()) {
+                showNotification('Sign-in succeeded but could not send credentials to CodeSynq. Please try again.', 'error');
                 return;
             }
 
