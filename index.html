@@ -928,33 +928,33 @@
                 const isEmbedded = urlParams.get('embedded') === '1';
                 const redirectUri = urlParams.get('redirect_uri');
 
+                // For embedded/mobile use popup; for web use redirect
                 if (isMobile || desktop || isEmbedded) {
-                    await auth.signInWithRedirect(provider);
-                    return;
-                }
+                    // Embedded/popup mode: use signInWithPopup for reliability
+                    const result = await auth.signInWithPopup(provider);
+                    if (result.user && result.credential) {
+                        const cred = result.credential;
+                        const detectedProvider = cred.providerId.includes('google') ? 'google' : 'github';
+                        const data = {
+                            providerName: detectedProvider,
+                            accessToken: cred.accessToken || '',
+                            idToken: cred.idToken || ''
+                        };
 
-                const result = await auth.signInWithPopup(provider);
-                if (result.user && result.credential) {
-                    const cred = result.credential;
-                    const detectedProvider = cred.providerId.includes('google') ? 'google' : 'github';
-                    const data = {
-                        providerName: detectedProvider,
-                        accessToken: cred.accessToken || '',
-                        idToken: cred.idToken || ''
-                    };
-
-                    if (redirectUri) {
+                        // Show success notification before sending result
                         showNotification('Successfully logged in!', 'success');
                         setTimeout(() => {
-                            const params = new URLSearchParams(data);
-                            window.location.href = `${redirectUri}?${params.toString()}`;
+                            if (window.desktopAuth && window.desktopAuth.sendAuthResult) {
+                                window.desktopAuth.sendAuthResult(data);
+                            }
                         }, 1200);
                         return;
                     }
-
-                    showNotification('Successfully logged in!', 'success');
-                    if (window.opener) window.close();
+                    return;
                 }
+
+                // Web mode: use signInWithRedirect
+                await auth.signInWithRedirect(provider);
             } catch (error) {
                 console.error(`${providerName} login error:`, error);
                 if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
