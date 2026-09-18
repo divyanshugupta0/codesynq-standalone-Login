@@ -910,7 +910,7 @@
 
         const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
-        // Social Login Handlers (Same for both)
+        // Social Login Handlers - Browser-based redirect auth
         const handleSocialLogin = async (providerName) => {
             let provider;
             if (providerName === 'google') {
@@ -923,41 +923,10 @@
             }
 
             try {
-                const urlParams = new URLSearchParams(window.location.search);
-                const desktop = isDesktop();
-                const isEmbedded = urlParams.get('embedded') === '1';
-                const redirectUri = urlParams.get('redirect_uri');
-
-                // For embedded/mobile use popup; for web use redirect
-                if (isMobile || desktop || isEmbedded) {
-                    // Embedded/popup mode: use signInWithPopup for reliability
-                    const result = await auth.signInWithPopup(provider);
-                    if (result.user && result.credential) {
-                        const cred = result.credential;
-                        const detectedProvider = cred.providerId.includes('google') ? 'google' : 'github';
-                        const data = {
-                            providerName: detectedProvider,
-                            accessToken: cred.accessToken || '',
-                            idToken: cred.idToken || ''
-                        };
-
-                        // Show success notification before sending result
-                        showNotification('Successfully logged in!', 'success');
-                        setTimeout(() => {
-                            if (window.desktopAuth && window.desktopAuth.sendAuthResult) {
-                                window.desktopAuth.sendAuthResult(data);
-                            }
-                        }, 1200);
-                        return;
-                    }
-                    return;
-                }
-
-                // Web mode: use signInWithRedirect
                 await auth.signInWithRedirect(provider);
             } catch (error) {
                 console.error(`${providerName} login error:`, error);
-                if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+                if (error.code !== 'auth/auth-cancelled-popup-request') {
                     showNotification(`${providerName} login failed: ` + (error.message || 'Please try again'), 'error');
                 }
             }
