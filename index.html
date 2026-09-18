@@ -746,6 +746,17 @@
             });
         }
 
+        // Preserve desktop mode across OAuth redirects
+        const urlParams = new URLSearchParams(window.location.search);
+        const isDesktopMode = urlParams.get('source') === 'desktop';
+        if (isDesktopMode) {
+            sessionStorage.setItem('codesynq-desktop', '1');
+        }
+
+        function isDesktop() {
+            return sessionStorage.getItem('codesynq-desktop') === '1';
+        }
+
         // Auth State Toggle
         let isLogin = true;
         const toggleAuthBtn = document.getElementById('toggleAuth');
@@ -816,10 +827,10 @@
 
             try {
                 const urlParams = new URLSearchParams(window.location.search);
-                const isDesktop = urlParams.get('source') === 'desktop';
+                const desktop = isDesktop();
 
                 if (isLogin) {
-                    if (isDesktop) {
+                    if (desktop) {
                         window.location.href = `codesynq://auth?provider=email&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;
                         setTimeout(() => {
                             btn.innerHTML = originalContent;
@@ -836,7 +847,7 @@
                     if (password.length < 6) {
                         throw new Error('Password must be at least 6 characters long');
                     }
-                    if (isDesktop) {
+                    if (desktop) {
                         window.location.href = `codesynq://auth?provider=signup&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&displayName=${encodeURIComponent(displayName)}`;
                         setTimeout(() => {
                             btn.innerHTML = originalContent;
@@ -880,9 +891,9 @@
 
             try {
                 const urlParams = new URLSearchParams(window.location.search);
-                const isDesktop = urlParams.get('source') === 'desktop';
+                const desktop = isDesktop();
 
-                if (isMobile || isDesktop) {
+                if (isMobile || desktop) {
                     await auth.signInWithRedirect(provider);
                     return;
                 } else {
@@ -906,10 +917,9 @@
         // Handle redirect result (for mobile or other redirect flows)
         auth.getRedirectResult().then(async (result) => {
             if (result && result.user) {
-                const urlParams = new URLSearchParams(window.location.search);
-                const isDesktop = urlParams.get('source') === 'desktop';
+                const desktop = isDesktop();
 
-                if (isDesktop && result.credential) {
+                if (desktop && result.credential) {
                     // Deep link back to desktop app with OAuth credential
                     const cred = result.credential;
                     const providerName = cred.providerId.includes('google') ? 'google' : 'github';
@@ -932,9 +942,8 @@
         // Check auth state on page load
         auth.onAuthStateChanged((user) => {
             if (user) {
-                const urlParams = new URLSearchParams(window.location.search);
-                const isDesktop = urlParams.get('source') === 'desktop';
-                if (!isDesktop) {
+                const desktop = isDesktop();
+                if (!desktop) {
                     showNotification('You are logged in.', 'success');
                 }
             }
