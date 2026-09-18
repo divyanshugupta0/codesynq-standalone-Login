@@ -828,9 +828,11 @@
             try {
                 const urlParams = new URLSearchParams(window.location.search);
                 const desktop = isDesktop();
+                const isEmbedded = urlParams.get('embedded') === '1';
+                const redirectUri = urlParams.get('redirect_uri');
 
                 if (isLogin) {
-                    if (desktop) {
+                    if (desktop && !isEmbedded && !redirectUri) {
                         window.location.href = `codesynq://auth?provider=email&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;
                         setTimeout(() => {
                             btn.innerHTML = originalContent;
@@ -838,16 +840,31 @@
                         }, 3000);
                         return;
                     }
+
+                    if (isEmbedded || redirectUri) {
+                        showNotification('Successfully logged in!', 'success');
+                        setTimeout(() => {
+                            if (redirectUri) {
+                                const params = new URLSearchParams({ provider: 'email', email, password });
+                                window.location.href = `${redirectUri}?${params.toString()}`;
+                            } else if (window.desktopAuth && window.desktopAuth.sendAuthResult) {
+                                window.desktopAuth.sendAuthResult({ provider: 'email', email, password });
+                            }
+                        }, 1200);
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                        return;
+                    }
+
                     const result = await auth.signInWithEmailAndPassword(email, password);
 
-                    // Redirect logic removed for standalone login page
                     showNotification('Successfully logged in!', 'success');
                     if (window.opener) window.close();
                 } else {
                     if (password.length < 6) {
                         throw new Error('Password must be at least 6 characters long');
                     }
-                    if (desktop) {
+                    if (desktop && !isEmbedded && !redirectUri) {
                         window.location.href = `codesynq://auth?provider=signup&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&displayName=${encodeURIComponent(displayName)}`;
                         setTimeout(() => {
                             btn.innerHTML = originalContent;
@@ -855,6 +872,22 @@
                         }, 3000);
                         return;
                     }
+
+                    if (isEmbedded || redirectUri) {
+                        showNotification('Account created successfully!', 'success');
+                        setTimeout(() => {
+                            if (redirectUri) {
+                                const params = new URLSearchParams({ provider: 'signup', email, password, displayName });
+                                window.location.href = `${redirectUri}?${params.toString()}`;
+                            } else if (window.desktopAuth && window.desktopAuth.sendAuthResult) {
+                                window.desktopAuth.sendAuthResult({ provider: 'signup', email, password, displayName });
+                            }
+                        }, 1200);
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                        return;
+                    }
+
                     const result = await auth.createUserWithEmailAndPassword(email, password);
                     await result.user.updateProfile({ displayName: displayName });
                     showNotification('Account created successfully!', 'success');
@@ -892,16 +925,35 @@
             try {
                 const urlParams = new URLSearchParams(window.location.search);
                 const desktop = isDesktop();
+                const isEmbedded = urlParams.get('embedded') === '1';
+                const redirectUri = urlParams.get('redirect_uri');
 
-                if (isMobile || desktop) {
+                if (isMobile || desktop || isEmbedded) {
                     await auth.signInWithRedirect(provider);
                     return;
-                } else {
-                    const result = await auth.signInWithPopup(provider);
-                    if (result.user) {
+                }
+
+                const result = await auth.signInWithPopup(provider);
+                if (result.user && result.credential) {
+                    const cred = result.credential;
+                    const detectedProvider = cred.providerId.includes('google') ? 'google' : 'github';
+                    const data = {
+                        providerName: detectedProvider,
+                        accessToken: cred.accessToken || '',
+                        idToken: cred.idToken || ''
+                    };
+
+                    if (redirectUri) {
                         showNotification('Successfully logged in!', 'success');
-                        if (window.opener) window.close();
+                        setTimeout(() => {
+                            const params = new URLSearchParams(data);
+                            window.location.href = `${redirectUri}?${params.toString()}`;
+                        }, 1200);
+                        return;
                     }
+
+                    showNotification('Successfully logged in!', 'success');
+                    if (window.opener) window.close();
                 }
             } catch (error) {
                 console.error(`${providerName} login error:`, error);
@@ -917,19 +969,43 @@
         // Handle redirect result (for mobile or other redirect flows)
         auth.getRedirectResult().then(async (result) => {
             if (result && result.user) {
-                const desktop = isDesktop();
+                const urlParams = new URLSearchParams(window.location.search);
+                const isEmbedded = urlParams.get('embedded') === '1';
+                const redirectUri = urlParams.get('redirect_uri');
 
-                if (desktop && result.credential) {
-                    // Deep link back to desktop app with OAuth credential
+                if (result.credential) {
                     const cred = result.credential;
                     const providerName = cred.providerId.includes('google') ? 'google' : 'github';
-                    let deepLink = `codesynq://auth?provider=${providerName}&accessToken=${encodeURIComponent(cred.accessToken || '')}`;
-                    if (cred.idToken) deepLink += `&idToken=${encodeURIComponent(cred.idToken)}`;
-                    window.location.href = deepLink;
-                    return;
+                    const data = {
+                        providerName,
+                        accessToken: cred.accessToken || '',
+                        idToken: cred.idToken || ''
+                    };
+
+                    if (redirectUri) {
+                        showNotification('Successfully logged in!', 'success');
+                        setTimeout(() => {
+                            const params = new URLSearchParams(data);
+                            window.location.href = `${redirectUri}?${params.toString()}`;
+                        }, 1200);
+                        return;
+                    }
+
+                    if (isEmbedded && window.desktopAuth && window.desktopAuth.sendAuthResult) {
+                        showNotification('Successfully logged in!', 'success');
+                        setTimeout(() => {
+                            window.desktopAuth.sendAuthResult(data);
+                        }, 1200);
+                        return;
+                    }
+
+                    if (desktop) {
+                        const params = new URLSearchParams(data);
+                        window.location.href = `codesynq://auth?${params.toString()}`;
+                        return;
+                    }
                 }
 
-                // Check UI Preference before redirecting (for mobile redirect flow)
                 showNotification('Successfully logged in!', 'success');
             }
         }).catch((error) => {
