@@ -606,6 +606,10 @@
                 <input type="password" id="password" placeholder="Password" required>
                 <i class="fas fa-lock"></i>
             </div>
+            <div class="form-group hidden" id="confirmPasswordGroup">
+                <input type="password" id="confirmPassword" placeholder="Re-type Password" autocomplete="new-password">
+                <i class="fas fa-lock"></i>
+            </div>
 
             <div class="auth-buttons">
                 <button id="authBtn">
@@ -624,8 +628,6 @@
 
             <div class="back-link">
                 <p><span id="toggleText">Don't have an account?</span> <a id="toggleAuth">Create Account</a></p>
-                <p style="margin-top: 10px;"><a href="index.html"><i class="fas fa-arrow-left"></i> Back to CodeSynq</a>
-                </p>
             </div>
         </div>
     </div>
@@ -862,6 +864,7 @@
         const authTitle = document.getElementById('authTitle');
         const authBtn = document.getElementById('authBtn');
         const nameGroup = document.getElementById('nameGroup');
+        const confirmPasswordGroup = document.getElementById('confirmPasswordGroup');
         const toggleText = document.getElementById('toggleText');
 
         toggleAuthBtn.onclick = () => {
@@ -872,6 +875,8 @@
                 authTitle.textContent = 'Welcome back! Please login to continue.';
                 authBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login';
                 nameGroup.classList.add('hidden');
+                confirmPasswordGroup.classList.add('hidden');
+                document.getElementById('confirmPassword').value = '';
                 toggleText.textContent = "Don't have an account?";
                 toggleAuthBtn.textContent = 'Create Account';
                 document.title = 'Login - CodeSynq';
@@ -880,6 +885,7 @@
                 authTitle.textContent = 'Create your account to get started.';
                 authBtn.innerHTML = '<i class="fas fa-user-plus"></i> Create Account';
                 nameGroup.classList.remove('hidden');
+                confirmPasswordGroup.classList.remove('hidden');
                 toggleText.textContent = "Already have an account?";
                 toggleAuthBtn.textContent = 'Login here';
                 document.title = 'Sign Up - CodeSynq';
@@ -890,6 +896,7 @@
         authBtn.onclick = async () => {
             const email = document.getElementById('email').value.trim();
             const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
             const displayName = document.getElementById('displayName').value.trim();
 
             // Validation check before processing
@@ -917,6 +924,17 @@
             if (!isLogin && !displayName) {
                 showNotification('Please enter your full name.', 'error');
                 return;
+            }
+
+            if (!isLogin) {
+                if (!confirmPassword) {
+                    showNotification('Please re-type your password.', 'error');
+                    return;
+                }
+                if (password !== confirmPassword) {
+                    showNotification('Passwords do not match.', 'error');
+                    return;
+                }
             }
 
             const btn = document.getElementById('authBtn');
