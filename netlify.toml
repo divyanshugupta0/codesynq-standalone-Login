@@ -2,6 +2,14 @@
   publish = "."
   functions = "netlify/functions"
 
+# Firebase OAuth helper (signInWithRedirect / popup) must load from the same host as authDomain.
+# init.json is served from __/firebase/; auth assets are proxied from the Firebase project.
+[[redirects]]
+  from = "/__/auth/*"
+  to = "https://codenexus-cbb96.firebaseapp.com/__/auth/:splat"
+  status = 200
+  force = true
+
 [functions]
   node_bundler = "esbuild"
 
