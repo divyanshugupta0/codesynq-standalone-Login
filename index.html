@@ -740,15 +740,107 @@
             });
         }
 
-        // Preserve desktop mode across OAuth redirects
-        const urlParams = new URLSearchParams(window.location.search);
-        const isDesktopMode = urlParams.get('source') === 'desktop';
-        if (isDesktopMode) {
-            sessionStorage.setItem('codesynq-desktop', '1');
-        }
+        // Preserve desktop / embedded context across Firebase OAuth redirects (query params are often stripped on return)
+        (function persistAuthContext() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('source') === 'desktop') {
+                sessionStorage.setItem('codesynq-desktop', '1');
+            }
+            if (params.get('embedded') === '1') {
+                sessionStorage.setItem('codesynq-embedded', '1');
+            }
+            const redirectUri = params.get('redirect_uri');
+            if (redirectUri) {
+                sessionStorage.setItem('codesynq-redirect-uri', redirectUri);
+            }
+        })();
 
         function isDesktop() {
             return sessionStorage.getItem('codesynq-desktop') === '1';
+        }
+
+        function isEmbeddedMode() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('embedded') === '1') return true;
+            return sessionStorage.getItem('codesynq-embedded') === '1';
+        }
+
+        function getRedirectUri() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('redirect_uri') || sessionStorage.getItem('codesynq-redirect-uri') || '';
+        }
+
+        function extractOAuthCredential(result) {
+            if (!result) return null;
+            if (result.credential) return result.credential;
+            const providerId =
+                (result.additionalUserInfo && result.additionalUserInfo.providerId) ||
+                (result.user && result.user.providerData && result.user.providerData[0] && result.user.providerData[0].providerId);
+            if (providerId === 'google.com') {
+                return firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+            }
+            if (providerId === 'github.com') {
+                return firebase.auth.GithubAuthProvider.credentialFromResult(result);
+            }
+            return null;
+        }
+
+        function oauthCredentialToDesktopData(cred) {
+            const providerName = cred.providerId && cred.providerId.includes('google') ? 'google' : 'github';
+            return {
+                providerName,
+                accessToken: cred.accessToken || '',
+                idToken: cred.idToken || ''
+            };
+        }
+
+        function deliverOAuthToApp(cred) {
+            const data = oauthCredentialToDesktopData(cred);
+            const isEmbedded = isEmbeddedMode();
+            const redirectUri = getRedirectUri();
+            const desktop = isDesktop();
+
+            if (redirectUri) {
+                showNotification('Successfully logged in!', 'success');
+                setTimeout(() => {
+                    const params = new URLSearchParams(data);
+                    window.location.href = `${redirectUri}?${params.toString()}`;
+                }, 400);
+                return true;
+            }
+
+            if (isEmbedded && window.desktopAuth && window.desktopAuth.sendAuthResult) {
+                showNotification('Successfully logged in!', 'success');
+                setTimeout(() => {
+                    window.desktopAuth.sendAuthResult(data);
+                }, 400);
+                return true;
+            }
+
+            if (desktop && !isEmbedded && !redirectUri) {
+                const params = new URLSearchParams(data);
+                window.location.href = `codesynq://auth?${params.toString()}`;
+                return true;
+            }
+
+            return false;
+        }
+
+        function shouldUsePopupForOAuth() {
+            // System browser + localhost callback uses redirect; popup only for legacy embedded Electron window.
+            return Boolean(
+                isEmbeddedMode() &&
+                window.desktopAuth &&
+                window.desktopAuth.sendAuthResult &&
+                !getRedirectUri()
+            );
+        }
+
+        function configureSocialProvider(provider, providerName) {
+            const wantsAccountPicker = isDesktop() || getRedirectUri();
+            if (providerName === 'google' && wantsAccountPicker) {
+                provider.setCustomParameters({ prompt: 'select_account' });
+            }
         }
 
         // Auth State Toggle
@@ -820,10 +912,9 @@
             btn.disabled = true;
 
             try {
-                const urlParams = new URLSearchParams(window.location.search);
                 const desktop = isDesktop();
-                const isEmbedded = urlParams.get('embedded') === '1';
-                const redirectUri = urlParams.get('redirect_uri');
+                const isEmbedded = isEmbeddedMode();
+                const redirectUri = getRedirectUri();
 
                 if (isLogin) {
                     if (desktop && !isEmbedded && !redirectUri) {
@@ -904,7 +995,7 @@
 
         const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
-        // Social Login Handlers - Browser-based redirect auth
+        // Social login: redirect in system browser (desktop); popup only for legacy embedded Electron window
         const handleSocialLogin = async (providerName) => {
             let provider;
             if (providerName === 'google') {
@@ -915,14 +1006,29 @@
                 provider = new firebase.auth.GithubAuthProvider();
                 provider.addScope('user:email');
             }
+            configureSocialProvider(provider, providerName);
 
             try {
+                if (getRedirectUri() && auth.currentUser) {
+                    await auth.signOut();
+                }
+                if (shouldUsePopupForOAuth()) {
+                    const result = await auth.signInWithPopup(provider);
+                    const cred = extractOAuthCredential(result);
+                    if (!cred) {
+                        showNotification('Sign-in succeeded but OAuth tokens were missing. Please try again.', 'error');
+                        return;
+                    }
+                    if (!deliverOAuthToApp(cred)) {
+                        showNotification('Successfully logged in!', 'success');
+                    }
+                    return;
+                }
                 await auth.signInWithRedirect(provider);
             } catch (error) {
                 console.error(`${providerName} login error:`, error);
-                if (error.code !== 'auth/auth-cancelled-popup-request') {
-                    showNotification(`${providerName} login failed: ` + (error.message || 'Please try again'), 'error');
-                }
+                if (error.code === 'auth/popup-closed-by-user') return;
+                showNotification(`${providerName} login failed: ` + (error.message || 'Please try again'), 'error');
             }
         };
 
@@ -931,51 +1037,20 @@
 
         // Handle redirect result (for mobile or other redirect flows)
         auth.getRedirectResult().then(async (result) => {
-            if (result && result.user) {
-                const urlParams = new URLSearchParams(window.location.search);
-                const isEmbedded = urlParams.get('embedded') === '1';
-                const redirectUri = urlParams.get('redirect_uri');
+            if (!result || !result.user) return;
 
-                if (result.credential) {
-                    const cred = result.credential;
-                    const providerName = cred.providerId.includes('google') ? 'google' : 'github';
-                    const data = {
-                        providerName,
-                        accessToken: cred.accessToken || '',
-                        idToken: cred.idToken || ''
-                    };
+            const cred = extractOAuthCredential(result);
+            if (cred && deliverOAuthToApp(cred)) return;
 
-                    if (redirectUri) {
-                        showNotification('Successfully logged in!', 'success');
-                        setTimeout(() => {
-                            const params = new URLSearchParams(data);
-                            window.location.href = `${redirectUri}?${params.toString()}`;
-                        }, 1200);
-                        return;
-                    }
-
-                    if (isEmbedded && window.desktopAuth && window.desktopAuth.sendAuthResult) {
-                        showNotification('Successfully logged in!', 'success');
-                        setTimeout(() => {
-                            window.desktopAuth.sendAuthResult(data);
-                        }, 1200);
-                        return;
-                    }
-
-                    if (desktop) {
-                        const params = new URLSearchParams(data);
-                        window.location.href = `codesynq://auth?${params.toString()}`;
-                        return;
-                    }
-                }
-
-                showNotification('Successfully logged in!', 'success');
+            if (cred && shouldUsePopupForOAuth()) {
+                showNotification('Sign-in succeeded but could not reach the app. Please try again.', 'error');
+                return;
             }
+
+            showNotification('Successfully logged in!', 'success');
         }).catch((error) => {
             console.error('Redirect result error:', error);
-            if (error.code && error.code !== 'auth/popup-closed-by-user') {
-                showNotification('Authentication failed: ' + (error.message || 'Please try again'), 'error');
-            }
+            showNotification('Authentication failed: ' + (error.message || 'Please try again'), 'error');
         });
 
         // Check auth state on page load
