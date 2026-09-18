@@ -821,6 +821,10 @@
                 if (isLogin) {
                     if (isDesktop) {
                         window.location.href = `codesynq://auth?provider=email&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;
+                        setTimeout(() => {
+                            btn.innerHTML = originalContent;
+                            btn.disabled = false;
+                        }, 3000);
                         return;
                     }
                     const result = await auth.signInWithEmailAndPassword(email, password);
@@ -834,6 +838,10 @@
                     }
                     if (isDesktop) {
                         window.location.href = `codesynq://auth?provider=signup&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&displayName=${encodeURIComponent(displayName)}`;
+                        setTimeout(() => {
+                            btn.innerHTML = originalContent;
+                            btn.disabled = false;
+                        }, 3000);
                         return;
                     }
                     const result = await auth.createUserWithEmailAndPassword(email, password);
@@ -874,21 +882,12 @@
                 const urlParams = new URLSearchParams(window.location.search);
                 const isDesktop = urlParams.get('source') === 'desktop';
 
-                if (isMobile) {
+                if (isMobile || isDesktop) {
                     await auth.signInWithRedirect(provider);
+                    return;
                 } else {
                     const result = await auth.signInWithPopup(provider);
                     if (result.user) {
-                        if (isDesktop && result.credential) {
-                            // Deep link back to desktop app with OAuth credential
-                            const cred = result.credential;
-                            let deepLink = `codesynq://auth?provider=${providerName}&accessToken=${cred.accessToken || ''}`;
-                            if (cred.idToken) deepLink += `&idToken=${cred.idToken}`;
-                            window.location.href = deepLink;
-                            return;
-                        }
-
-                        // Check UI Preference before redirecting (Web fallback)
                         showNotification('Successfully logged in!', 'success');
                         if (window.opener) window.close();
                     }
@@ -914,8 +913,8 @@
                     // Deep link back to desktop app with OAuth credential
                     const cred = result.credential;
                     const providerName = cred.providerId.includes('google') ? 'google' : 'github';
-                    let deepLink = `codesynq://auth?provider=${providerName}&accessToken=${cred.accessToken || ''}`;
-                    if (cred.idToken) deepLink += `&idToken=${cred.idToken}`;
+                    let deepLink = `codesynq://auth?provider=${providerName}&accessToken=${encodeURIComponent(cred.accessToken || '')}`;
+                    if (cred.idToken) deepLink += `&idToken=${encodeURIComponent(cred.idToken)}`;
                     window.location.href = deepLink;
                     return;
                 }
