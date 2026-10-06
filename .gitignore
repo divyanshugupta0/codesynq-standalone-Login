@@ -1,0 +1,4 @@
+.env
+.firebaserc
+firebase.json
+/__/firebase/init.json

@@ -742,7 +742,31 @@
             });
         }
 
-        // Preserve desktop / embedded context across Firebase OAuth redirects (query params are often stripped on return)
+        const TUNNEL_AUTH_CONTEXT_KEY = 'codesynq-tunnel-auth-context';
+        const TUNNEL_AUTH_CONTEXT_TTL_MS = 5 * 60 * 1000;
+
+        function getTunnelAuthContext() {
+            try {
+                const context = JSON.parse(sessionStorage.getItem(TUNNEL_AUTH_CONTEXT_KEY) || 'null');
+                if (!context || Date.now() - context.createdAt > TUNNEL_AUTH_CONTEXT_TTL_MS) {
+                    sessionStorage.removeItem(TUNNEL_AUTH_CONTEXT_KEY);
+                    return null;
+                }
+                return context;
+            } catch {
+                sessionStorage.removeItem(TUNNEL_AUTH_CONTEXT_KEY);
+                return null;
+            }
+        }
+
+        function clearTunnelAuthContext() {
+            sessionStorage.removeItem(TUNNEL_AUTH_CONTEXT_KEY);
+            sessionStorage.removeItem('codesynq-tunnel');
+            sessionStorage.removeItem('codesynq-tunnel-state');
+            sessionStorage.removeItem('codesynq-redirect-uri');
+        }
+
+        // Preserve auth context across Firebase OAuth redirects without changing the regular app login flow.
         (function persistAuthContext() {
             const params = new URLSearchParams(window.location.search);
             if (params.get('source') === 'desktop') {
@@ -750,6 +774,19 @@
             }
             if (params.get('embedded') === '1') {
                 sessionStorage.setItem('codesynq-embedded', '1');
+            }
+            if (params.get('source') === 'tunnel') {
+                sessionStorage.setItem('codesynq-tunnel', '1');
+                const state = params.get('state');
+                const redirectUri = params.get('redirect_uri');
+                if (state && redirectUri) {
+                    sessionStorage.setItem(TUNNEL_AUTH_CONTEXT_KEY, JSON.stringify({
+                        state,
+                        redirectUri,
+                        createdAt: Date.now(),
+                    }));
+                    sessionStorage.setItem('codesynq-tunnel-state', params.get('state'));
+                }
             }
             const redirectUri = params.get('redirect_uri');
             if (redirectUri) {
@@ -767,9 +804,62 @@
             return sessionStorage.getItem('codesynq-embedded') === '1';
         }
 
+        function isTunnelAuthFlow() {
+            return new URLSearchParams(window.location.search).get('source') === 'tunnel'
+                || Boolean(getTunnelAuthContext());
+        }
+
         function getRedirectUri() {
             const params = new URLSearchParams(window.location.search);
-            return params.get('redirect_uri') || sessionStorage.getItem('codesynq-redirect-uri') || '';
+            return params.get('redirect_uri')
+                || getTunnelAuthContext()?.redirectUri
+                || sessionStorage.getItem('codesynq-redirect-uri')
+                || '';
+        }
+
+        let tunnelAuthHandoff = false;
+        async function deliverTunnelAuth(user, config) {
+            if (!isTunnelAuthFlow() || !user) return false;
+            if (tunnelAuthHandoff) return true;
+            const serviceUrl = String(config.tunnelServiceUrl || '').replace(/\/+$/, '');
+            if (!serviceUrl) throw new Error('The tunneling service is not configured for sign-in.');
+            const service = new URL(serviceUrl);
+            const context = getTunnelAuthContext();
+            const callbackValue = context?.redirectUri || getRedirectUri();
+            let callback;
+            try {
+                callback = new URL(callbackValue);
+            } catch {
+                throw new Error('Tunnel sign-in callback is missing or invalid. Start again from the private tunnel.');
+            }
+            if (service.protocol !== 'https:' || callback.protocol !== 'https:'
+                || callback.origin !== service.origin || callback.pathname !== '/auth/complete'
+                || callback.search || callback.hash) {
+                throw new Error('The tunneling service is not configured for secure sign-in.');
+            }
+            const state = context?.state || sessionStorage.getItem('codesynq-tunnel-state');
+            if (!state) throw new Error('Tunnel sign-in expired. Start the private tunnel link again.');
+            tunnelAuthHandoff = true;
+            try {
+                const response = await fetch(callback.href, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ idToken: await user.getIdToken(), state }),
+                });
+                if (!response.ok) {
+                    throw new Error(`Tunnel sign-in failed (HTTP ${response.status}).`);
+                }
+                const result = await response.json();
+                if (typeof result.redirectUrl !== 'string' || !result.redirectUrl.startsWith(`${service.origin}/auth/finish?`)) {
+                    throw new Error('The tunneling service returned an invalid sign-in response.');
+                }
+                clearTunnelAuthContext();
+                window.location.replace(result.redirectUrl);
+                return true;
+            } catch (error) {
+                tunnelAuthHandoff = false;
+                throw error;
+            }
         }
 
         function postOAuthToRedirectUri(redirectUri, data) {
@@ -812,7 +902,14 @@
             };
         }
 
-        function deliverOAuthToApp(cred) {
+        function deliverOAuthToApp(cred, user = auth.currentUser) {
+            if (isTunnelAuthFlow()) {
+                deliverTunnelAuth(user, firebaseConfig).catch(error => {
+                    console.error('Tunnel sign-in handoff failed:', error);
+                    showNotification(error.message || 'Tunnel sign-in failed.', 'error');
+                });
+                return true;
+            }
             const data = oauthCredentialToDesktopData(cred);
             const isEmbedded = isEmbeddedMode();
             const redirectUri = getRedirectUri();
@@ -947,6 +1044,20 @@
                 const isEmbedded = isEmbeddedMode();
                 const redirectUri = getRedirectUri();
 
+                if (isTunnelAuthFlow()) {
+                    let user;
+                    if (isLogin) {
+                        const result = await auth.signInWithEmailAndPassword(email, password);
+                        user = result.user;
+                    } else {
+                        const result = await auth.createUserWithEmailAndPassword(email, password);
+                        await result.user.updateProfile({ displayName });
+                        user = result.user;
+                    }
+                    await deliverTunnelAuth(user, firebaseConfig);
+                    return;
+                }
+
                 if (isLogin) {
                     if (desktop && !isEmbedded && !redirectUri) {
                         window.location.href = `codesynq://auth?provider=email&email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;
@@ -1050,7 +1161,7 @@
                         showNotification('Sign-in succeeded but OAuth tokens were missing. Please try again.', 'error');
                         return;
                     }
-                    if (!deliverOAuthToApp(cred)) {
+                    if (!deliverOAuthToApp(cred, result.user)) {
                         showNotification('Successfully logged in!', 'success');
                     }
                     return;
@@ -1071,7 +1182,11 @@
             if (!result || !result.user) return;
 
             const cred = extractOAuthCredential(result);
-            if (cred && deliverOAuthToApp(cred)) return;
+            if (isTunnelAuthFlow()) {
+                await deliverTunnelAuth(result.user, firebaseConfig);
+                return;
+            }
+            if (cred && deliverOAuthToApp(cred, result.user)) return;
 
             if (getRedirectUri()) {
                 showNotification('Sign-in succeeded but could not send credentials to CodeSynq. Please try again.', 'error');
@@ -1087,6 +1202,13 @@
         // Check auth state on page load
         auth.onAuthStateChanged((user) => {
             if (user) {
+                if (isTunnelAuthFlow()) {
+                    deliverTunnelAuth(user, firebaseConfig).catch(error => {
+                        console.error('Tunnel sign-in handoff failed:', error);
+                        showNotification(error.message || 'Tunnel sign-in failed.', 'error');
+                    });
+                    return;
+                }
                 const desktop = isDesktop();
                 if (!desktop) {
                     showNotification('You are logged in.', 'success');
