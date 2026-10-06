@@ -14,7 +14,7 @@ exports.handler = async function(event, context) {
             messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
             appId: process.env.FIREBASE_APP_ID,
             measurementId: process.env.FIREBASE_MEASUREMENT_ID,
-            tunnelServiceUrl: process.env.TUNNEL_SERVICE_URL || "https://codesynq-tunnelling.rudragupta415.workers.dev"
+            tunnelServiceUrl: process.env.TUNNEL_SERVICE_URL 
         })
     };
 };
